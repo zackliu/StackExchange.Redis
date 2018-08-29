@@ -12,19 +12,11 @@
 
     <!-- we should preferably not include this in release builds, but isn't dramatic -->
     <DefineConstants>$(DefineConstants);TEST</DefineConstants>
-    <VectorSafe>true</VectorSafe>
-  </PropertyGroup>
-  
-  <PropertyGroup Condition="'$(TargetFramework)' == 'net461'">
-    <VectorSafe>false</VectorSafe>
+    <DefineConstants Condition="'$(TargetFramework)' != 'net461'">$(DefineConstants);VECTOR_SAFE</DefineConstants>
   </PropertyGroup>
   
   <PropertyGroup Condition="'$(TargetFramework)' == 'net472'">
     <!--<PackageReference Include="System.IO.Compression" Version="4.3.0" />-->
-  </PropertyGroup>
-
-  <PropertyGroup Condition="'$(Configuration)' == 'Debug' and '$(Computername)'=='OCHO'">
-    <!--<DefineConstants>$(DefineConstants);LOGOUTPUT</DefineConstants>-->
   </PropertyGroup>
   
   <PropertyGroup Condition="'$(VectorSafe)' == 'true'">
