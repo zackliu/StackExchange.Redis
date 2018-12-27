@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Buffers;
 using System.Buffers.Text;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -71,7 +72,6 @@ namespace StackExchange.Redis
 
             OnCreateEcho();
         }
-
         internal async Task BeginConnectAsync(TextWriter log)
         {
             Thread.VolatileWrite(ref firstUnansweredWriteTickCount, 0);
@@ -1156,10 +1156,10 @@ namespace StackExchange.Redis
                     var host = config.SslHost;
                     if (string.IsNullOrWhiteSpace(host)) host = Format.ToStringHostOnly(bridge.ServerEndPoint.EndPoint);
 
-                    var ssl = new SslStream(new NetworkStream(socket), false,
+                    var ssl = new SslStreamWithCustomizedTaskScheduler(new NetworkStream(socket), false,
                         config.CertificateValidationCallback ?? GetAmbientIssuerCertificateCallback(),
                         config.CertificateSelectionCallback ?? GetAmbientClientCertificateCallback(),
-                        EncryptionPolicy.RequireEncryption);
+                        EncryptionPolicy.RequireEncryption, SslStreamTaskScheduler.DefaultInstance);
                     try
                     {
                         try
@@ -1533,6 +1533,88 @@ namespace StackExchange.Redis
                 oversized[count++] = new RawResult(line.Type, token, false);
             }
             return new RawResult(oversized, count);
+        }
+
+        internal class SslStreamWithCustomizedTaskScheduler : SslStream
+        {
+            private readonly TaskScheduler _taskScheduler;
+            public SslStreamWithCustomizedTaskScheduler(Stream innerStream, bool leaveInnerStreamOpen,
+                RemoteCertificateValidationCallback userCertificateValidationCallback,
+                LocalCertificateSelectionCallback userCertificateSelectionCallback, EncryptionPolicy encryptionPolicy,
+                TaskScheduler taskScheduler) : base(innerStream, leaveInnerStreamOpen, userCertificateValidationCallback, userCertificateSelectionCallback, encryptionPolicy)
+            {
+                _taskScheduler = taskScheduler ?? TaskScheduler.Default;
+            }
+
+            public override Task FlushAsync(CancellationToken cancellationToken)
+            {
+                TaskFactory factory = Task.Factory;
+                CancellationToken cancellationToken1 = cancellationToken;
+                int num = 8;
+                return factory.StartNew((Action<object>)(state => ((Stream)state).Flush()), (object)this, cancellationToken1, (TaskCreationOptions)num, _taskScheduler);
+            }
+        }
+
+        internal sealed class SslStreamTaskScheduler : TaskScheduler, IDisposable
+        {
+            private BlockingCollection<Task> _tasks = new BlockingCollection<Task>();
+            private readonly Thread _thread = null;
+            private readonly CancellationTokenSource cts = new CancellationTokenSource();
+
+            public static SslStreamTaskScheduler DefaultInstance => StaticContext.Instance;
+
+            private static class StaticContext
+            {   
+                internal static readonly SslStreamTaskScheduler Instance = new SslStreamTaskScheduler();
+            }
+
+            public SslStreamTaskScheduler()
+            {
+                _thread = new Thread(Execute)
+                {
+                    Name = "SslStreamThread",
+                    Priority = ThreadPriority.AboveNormal,
+                    IsBackground = true
+
+                };
+                _thread.Start(cts.Token);
+            }
+
+            private void Execute(object token)
+            {
+                var cancellationToken = (CancellationToken) token;
+                while (!cancellationToken.IsCancellationRequested)
+                {
+                    var task = _tasks.Take(cancellationToken);
+                    TryExecuteTask(task);
+                }
+            }
+
+            protected override void QueueTask(Task task)
+            {
+                _tasks.Add(task);
+            }
+
+            protected override IEnumerable<Task> GetScheduledTasks()
+            {
+                return _tasks.ToArray();
+            }
+
+            protected override bool TryExecuteTaskInline(Task task, bool taskWasPreviouslyQueued)
+            {
+                if (!taskWasPreviouslyQueued)
+                {
+                    TryExecuteTask(task);
+                    return true;
+                }
+
+                return false;
+            }
+
+            public void Dispose()
+            {
+                cts.Cancel();
+            }
         }
     }
 }
