@@ -77,8 +77,10 @@ namespace StackExchange.Redis
             if (string.IsNullOrWhiteSpace(name)) name = GetType().Name;
             Name = name;
 
-            const long Receive_PauseWriterThreshold = 4L * 1024 * 1024 * 1024; // let's give it up to 4GiB of buffer for now
-            const long Receive_ResumeWriterThreshold = 3L * 1024 * 1024 * 1024;
+            const long Receive_PauseWriterThreshold = 200L * 1024 * 1024; // let's give it up to 200 MB of buffer for now
+            const long Receive_ResumeWriterThreshold = 150L * 1024 * 1024;
+            const long Send_PauseWriterThreshold =  100L * 1024 * 1024; // let's give it up to 100 MB of buffer for now
+            const long Send_ResumeWriterThreshold = 70L * 1024 * 1024;
 
             var defaultPipeOptions = PipeOptions.Default;
             _schedulerPool = new DedicatedThreadPoolPipeScheduler(name + ":IO",
@@ -88,8 +90,8 @@ namespace StackExchange.Redis
                 pool: defaultPipeOptions.Pool,
                 readerScheduler: _schedulerPool,
                 writerScheduler: _schedulerPool,
-                pauseWriterThreshold: defaultPipeOptions.PauseWriterThreshold,
-                resumeWriterThreshold: defaultPipeOptions.ResumeWriterThreshold,
+                pauseWriterThreshold: Send_PauseWriterThreshold,
+                resumeWriterThreshold: Send_ResumeWriterThreshold,
                 minimumSegmentSize: Math.Max(defaultPipeOptions.MinimumSegmentSize, MINIMUM_SEGMENT_SIZE),
                 useSynchronizationContext: false);
             ReceivePipeOptions = new PipeOptions(
